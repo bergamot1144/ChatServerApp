@@ -1,0 +1,105 @@
+{
+    "Users": [
+        {
+            "Username": "c123",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Brioni",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Gucci",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Chanel",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Fendi",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Hermes",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Dior",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Celine",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Balenciaga",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "Prada",
+            "PasswordHash": "1234",
+            "Role": "Client"
+        },
+        {
+            "Username": "m123",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "green",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "black",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "brown",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "grey",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "olive",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "red",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "rose",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "violet",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        },
+        {
+            "Username": "gold",
+            "PasswordHash": "1234",
+            "Role": "Moderator"
+        }
+    ]
+}
+
