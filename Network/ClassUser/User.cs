@@ -1,12 +1,12 @@
-﻿using System;
-
-namespace ChatServerApp.Network
+﻿namespace ChatServerApp.Network
 {
-    // Класс для представления одного пользователя
+    /// <summary>
+    /// Класс пользователя (для аутентификации).
+    /// </summary>
     public class User
     {
         public string Username { get; set; }
-        public string PasswordHash { get; set; } // Для упрощения можно хранить пароль, но лучше хранить хэш
-        public string Role { get; set; }         // "Client" или "Moderator"
+        public string PasswordHash { get; set; }
+        public string Role { get; set; }
     }
 }

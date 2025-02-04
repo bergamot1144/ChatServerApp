@@ -5,49 +5,45 @@ using Newtonsoft.Json;
 
 namespace ChatServerApp.Network
 {
-    // Класс, отвечающий за чтение пользователей из JSON
     public class UserRepository
     {
-        private Dictionary<string, User> _usersByName = new Dictionary<string, User>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, User> _users;
 
         public UserRepository(string jsonPath)
         {
-            LoadUsersFromJson(jsonPath);
+            _users = new Dictionary<string, User>(StringComparer.OrdinalIgnoreCase);
+            LoadUsers(jsonPath);
         }
 
-        private void LoadUsersFromJson(string path)
+        private void LoadUsers(string path)
         {
             if (!File.Exists(path))
             {
-                Console.WriteLine($"[UserRepository] Файл '{path}' не найден, пользователи не загружены.");
+                Console.WriteLine($"[UserRepository] Файл '{path}' не найден.");
                 return;
             }
-
             try
             {
                 string json = File.ReadAllText(path);
-                var userData = JsonConvert.DeserializeObject<UserData>(json);
-
-                if (userData?.Users != null)
+                UserData data = JsonConvert.DeserializeObject<UserData>(json);
+                if (data?.Users != null)
                 {
-                    foreach (var user in userData.Users)
+                    foreach (var user in data.Users)
                     {
-                        _usersByName[user.Username] = user;
+                        _users[user.Username] = user;
                     }
                 }
-
-                Console.WriteLine($"[UserRepository] Загружено пользователей: {_usersByName.Count}");
+                Console.WriteLine($"[UserRepository] Загружено пользователей: {_users.Count}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[UserRepository] Ошибка при чтении JSON: {ex.Message}");
+                Console.WriteLine($"[UserRepository] Ошибка: {ex.Message}");
             }
         }
 
-        // Возвращает объект пользователя или null, если не найден
         public User GetUserByUsername(string username)
         {
-            _usersByName.TryGetValue(username, out var user);
+            _users.TryGetValue(username, out User user);
             return user;
         }
     }

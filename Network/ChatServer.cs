@@ -1,431 +1,662 @@
-﻿using System;
+﻿//using System;
+//using System.Collections.Concurrent;
+//using System.Linq;
+//using System.Net;
+//using System.Net.Sockets;
+//using System.Text;
+//using System.Threading;
+//using System.Threading.Tasks;
+
+//namespace ChatServerApp.Network
+//{
+//    /// <summary>
+//    /// Основной класс сервера.
+//    /// Использует асинхронное принятие клиентов и CancellationToken для корректного завершения.
+//    /// </summary>
+//    public class ChatServer
+//    {
+//        private TcpListener _tcpListener;
+//        private readonly ConcurrentDictionary<string, ChatRoom> _chatRooms = new ConcurrentDictionary<string, ChatRoom>();
+//        private readonly ConcurrentDictionary<string, Participant> _participants = new ConcurrentDictionary<string, Participant>();
+//        private readonly ConcurrentDictionary<string, string> _participantToRoomMap = new ConcurrentDictionary<string, string>();
+//        private CancellationTokenSource _cts;
+
+//        // Для аутентификации используем репозиторий пользователей
+//        private readonly UserRepository _userRepository;
+
+//        public ChatServer(string userJsonPath)
+//        {
+//            _userRepository = new UserRepository(userJsonPath);
+
+//        }
+//        /// <summary>
+//        /// Простой метод аутентификации.
+//        /// Если пользователь найден и пароль совпадает, возвращается его роль (например, "Client" или "Moderator").
+//        /// В противном случае возвращается null.
+//        /// </summary>
+//        private string AuthenticateUser(string username, string password)
+//        {
+//            // Пример простой проверки. В реальном приложении следует использовать хэширование.
+//            var user = _userRepository.GetUserByUsername(username);
+//            if (user != null && user.PasswordHash == password)
+//            {
+//                return user.Role;
+//            }
+//            return null;
+//        }
+
+//        /// <summary>
+//        /// Запуск сервера.
+//        /// </summary>
+//        public async Task StartAsync(string ipAddress, int port, CancellationToken token)
+//        {
+//            _tcpListener = new TcpListener(IPAddress.Parse(ipAddress), port);
+//            _tcpListener.Start();
+//            Console.WriteLine($"[Server] Запущен на {ipAddress}:{port}");
+
+//            try
+//            {
+//                while (!token.IsCancellationRequested)
+//                {
+//                    TcpClient tcpClient = await _tcpListener.AcceptTcpClientAsync();
+//                    _ = HandleClientAsync(tcpClient);
+//                }
+//            }
+//            catch (Exception ex) when (ex is OperationCanceledException)
+//            {
+//                Console.WriteLine("[Server] Остановка сервера.");
+//            }
+//            finally
+//            {
+//                _tcpListener.Stop();
+//            }
+//        }
+
+//        public void Stop()
+//        {
+//            _cts?.Cancel();
+//            _tcpListener.Stop();
+//            Console.WriteLine("[Server] Сервер остановлен.");
+//        }
+
+//        private async Task HandleClientAsync(TcpClient tcpClient)
+//        {
+//            // Генерируем уникальный идентификатор для участника
+//            string participantId = Guid.NewGuid().ToString();
+//            Console.WriteLine($"[Server] Новый участник подключился: {participantId}");
+
+//            // Оборачиваем TcpClient и связанные потоки в using для корректного освобождения ресурсов
+//            using (tcpClient)
+//            using (NetworkStream networkStream = tcpClient.GetStream())
+//            using (StreamReader reader = new StreamReader(networkStream, Encoding.UTF8))
+//            using (StreamWriter writer = new StreamWriter(networkStream, Encoding.UTF8) { AutoFlush = true })
+//            {
+//                Participant participant = null;
+//                try
+//                {
+//                    // Аутентификация: ожидаем сообщение вида "LOGIN:username:password"
+//                    string loginMessage = await reader.ReadLineAsync();
+//                    if (string.IsNullOrEmpty(loginMessage) || !loginMessage.StartsWith("LOGIN:"))
+//                    {
+//                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidFormat");
+//                        Console.WriteLine($"[Server] Некорректный формат LOGIN сообщения от {participantId}: {loginMessage}");
+//                        return;
+//                    }
+
+//                    string[] loginParts = loginMessage.Split(':');
+//                    if (loginParts.Length != 3)
+//                    {
+//                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidFormat");
+//                        Console.WriteLine($"[Server] Некорректный формат LOGIN сообщения от {participantId}: {loginMessage}");
+//                        return;
+//                    }
+
+//                    string username = loginParts[1];
+//                    string password = loginParts[2];
+
+//                    // Здесь должна быть ваша логика аутентификации, например, через UserRepository.
+//                    // Предположим, аутентификация прошла успешно, и мы получаем роль (например, "Client" или "Moderator").
+//                    string authenticatedRole = AuthenticateUser(username, password); // Метод вашей аутентификации
+//                    if (authenticatedRole == null)
+//                    {
+//                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidCredentials");
+//                        Console.WriteLine($"[Server] Неверные учетные данные для {username}.");
+//                        return;
+//                    }
+
+//                    // Создаём участника
+//                    participant = new Participant(participantId, username, authenticatedRole, tcpClient);
+//                    _participants.TryAdd(participantId, participant);
+//                    await writer.WriteLineAsync($"LOGIN_OK:{authenticatedRole}");
+//                    Console.WriteLine($"[Server] Участник {username} ({participantId}) успешно аутентифицирован как {authenticatedRole}");
+
+//                    // Назначение участника в комнату
+//                    string roomId = AssignParticipantToRoom(participant);
+//                    if (!string.IsNullOrEmpty(roomId))
+//                    {
+//                        Console.WriteLine($"[Server] Участник {username} ({participantId}) добавлен в комнату {roomId}");
+//                    }
+//                    else if (authenticatedRole.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
+//                    {
+//                        Console.WriteLine($"[Server] Модератор {username} зарегистрирован без присоединения к комнате.");
+//                    }
+
+//                    // Основной цикл обработки входящих сообщений от участника
+//                    while (true)
+//                    {
+//                        string message = await reader.ReadLineAsync();
+//                        if (message == null)
+//                        {
+//                            Console.WriteLine($"[Server] Участник {username} ({participantId}) отключился.");
+//                            break;
+//                        }
+//                        Console.WriteLine($"[Server] Получено от {username} ({participantId}): {message}");
+
+//                        // Если участник – модератор и отправил команду "CLIENT_LIST", то отправляем список доступных комнат.
+//                        if (participant.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase) &&
+//                            message.Equals("CLIENT_LIST", StringComparison.OrdinalIgnoreCase))
+//                        {
+//                            SendRoomListToModerator(participant);
+//                            continue;
+//                        }
+
+//                        // Если участник – модератор и отправил команду подключения: "CONNECT:<RoomId>"
+//                        if (participant.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase) &&
+//                            message.StartsWith("CONNECT:", StringComparison.OrdinalIgnoreCase))
+//                        {
+//                            string roomIdToConnect = message.Substring("CONNECT:".Length).Trim();
+//                            if (_chatRooms.TryGetValue(roomIdToConnect, out ChatRoom room))
+//                            {
+//                                // Добавляем модератора в выбранную комнату
+//                                room.AddParticipant(participant);
+//                                _participantToRoomMap[participant.Id] = roomIdToConnect;
+//                                Console.WriteLine($"[Server] Модератор {username} присоединён к комнате {roomIdToConnect}");
+//                                participant.SendMessage($"CONNECT_OK:{roomIdToConnect}");
+//                                // Обновляем список комнат для всех модераторов (если нужно)
+//                                BroadcastRoomListToModerators();
+//                            }
+//                            else
+//                            {
+//                                participant.SendMessage("ERROR:RoomNotFound");
+//                            }
+//                            continue;
+//                        }
+
+//                        // Для остальных сообщений используем стандартную маршрутизацию по комнатам.
+//                        HandleChannelMessage(message, participantId);
+//                    }
+//                }
+//                catch (Exception ex)
+//                {
+//                    Console.WriteLine($"[Server] Ошибка с участником {participantId}: {ex.Message}");
+//                }
+//                finally
+//                {
+//                    RemoveParticipantFromRoom(participantId);
+//                    _participants.TryRemove(participantId, out _);
+//                    Console.WriteLine($"[Server] Участник {participantId} удалён.");
+//                }
+//            }
+//        }
+
+//        /// <summary>
+//        /// Формирует список доступных комнат (где есть клиент, но модератор не присоединён)
+//        /// и отправляет его модератору. Каждый элемент списка имеет формат: "ClientUsername".
+//        /// </summary>
+//        /// <param name="moderator">Участник с ролью модератора.</param>
+//        private void SendRoomListToModerator(Participant moderator)
+//        {
+//            var availableRooms = _chatRooms.Values
+//                                   .Where(r => r.Client != null && r.Moderator == null)
+//                                   .Select(r => r.Client.Username) // отображаем только имя клиента
+//                                   .ToArray();
+
+//            string message = "ROOM_LIST:" + string.Join(",", availableRooms);
+//            moderator.SendMessage(message); // метод SendMessage гарантирует добавление \n
+//            Console.WriteLine($"[Server] Отправлен список комнат модератору {moderator.Username}: {message}");
+//        }
+
+
+
+//        /// <summary>
+//        /// Формирует список активных клиентов и отправляет его модератору.
+//        /// Список состоит из имён (Username) участников с ролью "Client".
+//        /// </summary>
+//        /// <param name="moderator">Участник с ролью модератора, который сделал запрос.</param>
+//        private void SendClientListToModerator(Participant moderator)
+//        {
+//            var clients = _participants.Values
+//                            .Where(p => p.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
+//                            .Select(p => p.Username)
+//                            .ToArray();
+
+//            // Формируем сообщение и добавляем '\n' в конец
+//            string message = "CLIENT_LIST:" + string.Join(",", clients) + "\n";
+//            moderator.SendMessage(message);
+//            Console.WriteLine($"[Server] Отправлен список клиентов модератору {moderator.Username}: {message.Trim()}");
+//        }
+//        /// <summary>
+//        /// Рассылает всем модераторам обновлённый список активных клиентов.
+//        /// Список формируется из пользователей с ролью "Client".
+//        /// </summary>
+//        private void BroadcastClientListToModerators()
+//        {
+//            var clients = _participants.Values
+//                            .Where(p => p.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
+//                            .Select(p => p.Username)
+//                            .ToArray();
+
+//            string message = "CLIENT_LIST:" + string.Join(",", clients);
+//            foreach (var moderator in _participants.Values.Where(p => p.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase)))
+//            {
+//                // Метод SendMessage теперь гарантированно добавляет "\n" в конце, если его нет.
+//                moderator.SendMessage(message);
+//                Console.WriteLine($"[Server] Рассылка списка модераторам {moderator.Username}: {message}");
+//            }
+//        }
+
+
+
+
+
+
+
+
+
+//        /// <summary>
+//        /// Назначение участника в комнату.
+//        /// Если подходящая комната не найдена – создаётся новая.
+//        /// </summary>
+//        private string AssignParticipantToRoom(Participant participant)
+//        {
+//            Console.WriteLine($"[Server] Попытка присвоить участника {participant.Username} с ролью {participant.Role}.");
+//            string roomId = string.Empty;
+
+//            if (participant.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
+//            {
+//                // Для клиента: ищем комнату с модератором и без клиента или создаём новую.
+//                var room = _chatRooms.Values.FirstOrDefault(r => r.Moderator != null && r.Client == null);
+//                if (room != null)
+//                {
+//                    room.AddParticipant(participant);
+//                    _participantToRoomMap.TryAdd(participant.Id, room.RoomId);
+//                    roomId = room.RoomId;
+//                    Console.WriteLine($"[Server] Client {participant.Username} присвоен к существующей комнате {room.RoomId}");
+//                }
+//                else
+//                {
+//                    roomId = "Room_" + Guid.NewGuid().ToString();
+//                    ChatRoom newRoom = new ChatRoom(roomId);
+//                    newRoom.AddParticipant(participant);
+//                    _chatRooms.TryAdd(roomId, newRoom);
+//                    _participantToRoomMap.TryAdd(participant.Id, roomId);
+//                    Console.WriteLine($"[Server] Создана новая комната {roomId} для участника {participant.Username}");
+//                }
+//                // При добавлении клиента рассылаем обновлённый список доступных комнат
+//                BroadcastRoomListToModerators();
+//            }
+//            else if (participant.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
+//            {
+//                // Для модератора НЕ присоединяем его автоматически к комнате.
+//                // Мы просто регистрируем его как участника без привязки к комнате.
+//                // Для этого можно сохранить модератора отдельно (например, в _participants) без вызова AssignParticipantToRoom.
+//                _participants.TryAdd(participant.Id, participant);
+//                Console.WriteLine($"[Server] Модератор {participant.Username} зарегистрирован, но не присоединён к комнате.");
+//                // Возвращаем специальное значение, например, пустую строку или null
+//                roomId = string.Empty;
+//            }
+//            else
+//            {
+//                // Если роль неизвестна, можно создать отдельную комнату (или вернуть ошибку)
+//                roomId = "Room_" + Guid.NewGuid().ToString();
+//                ChatRoom newRoom = new ChatRoom(roomId);
+//                newRoom.AddParticipant(participant);
+//                _chatRooms.TryAdd(roomId, newRoom);
+//                _participantToRoomMap.TryAdd(participant.Id, roomId);
+//                Console.WriteLine($"[Server] Создана новая комната {roomId} для участника {participant.Username}");
+//            }
+//            return roomId;
+//        }
+
+
+
+//        /// <summary>
+//        /// Удаление участника из комнаты.
+//        /// Если комната пуста – удаляем её.
+//        /// </summary>
+//        private void RemoveParticipantFromRoom(string participantId)
+//        {
+//            if (_participantToRoomMap.TryRemove(participantId, out var roomId))
+//            {
+//                if (_chatRooms.TryGetValue(roomId, out var room))
+//                {
+//                    // Запоминаем роль перед удалением, чтобы потом решить, стоит ли обновлять список
+//                    string removedRole = room.Moderator != null && room.Moderator.Id == participantId ? "Moderator" :
+//                                         room.Client != null && room.Client.Id == participantId ? "Client" : string.Empty;
+
+//                    room.RemoveParticipant(participantId);
+//                    Console.WriteLine($"[Server] Участник {participantId} удален из комнаты {room.RoomId}.");
+
+//                    // Если комната пуста, удаляем ее
+//                    if (room.Moderator == null && room.Client == null)
+//                    {
+//                        _chatRooms.TryRemove(room.RoomId, out _);
+//                        Console.WriteLine($"[Server] Комната {room.RoomId} удалена, так как она пуста.");
+//                    }
+
+//                    // Если удален клиент, рассылаем обновленный список модераторам
+//                    if (removedRole == "Client")
+//                    {
+//                        BroadcastClientListToModerators();
+//                    }
+//                }
+//            }
+//        }
+
+
+//        /// <summary>
+//        /// Маршрутизация входящих сообщений к нужной комнате.
+//        /// </summary>
+//        private void HandleChannelMessage(string message, string senderId)
+//        {
+//            var room = _chatRooms.Values.FirstOrDefault(r => r.HasParticipant(senderId));
+//            if (room != null)
+//            {
+//                room.SendMessageToAll(message, senderId);
+//            }
+//            else
+//            {
+//                Console.WriteLine($"[Server] Отправитель {senderId} не принадлежит ни к одной комнате.");
+//            }
+//        }
+
+
+//        private void BroadcastRoomListToModerators()
+//        {
+//            foreach (var mod in _participants.Values.Where(p => p.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase)))
+//            {
+//                SendRoomListToModerator(mod);
+//            }
+//        }
+
+//    }
+//}
+
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
-using Newtonsoft.Json;
+using System.Threading.Tasks;
 
 namespace ChatServerApp.Network
 {
     public class ChatServer
     {
         private TcpListener _tcpListener;
-
-        // Словари для отслеживания клиентов и модераторов
-        private ConcurrentDictionary<string, TcpClient> _clients = new ConcurrentDictionary<string, TcpClient>();
-        private ConcurrentDictionary<string, NetworkStream> _clientStreams = new ConcurrentDictionary<string, NetworkStream>();
         private ConcurrentDictionary<string, ChatRoom> _chatRooms = new ConcurrentDictionary<string, ChatRoom>();
-        private ConcurrentDictionary<string, TcpClient> _moderators = new ConcurrentDictionary<string, TcpClient>();
-
-        // Дополнительные словари для хранения clientId -> username и role
-        private ConcurrentDictionary<string, string> _clientIdToUsername = new ConcurrentDictionary<string, string>();
-        private ConcurrentDictionary<string, string> _clientIdToRole = new ConcurrentDictionary<string, string>();
-
+        private ConcurrentDictionary<string, Participant> _participants = new ConcurrentDictionary<string, Participant>();
+        private ConcurrentDictionary<string, string> _participantToRoomMap = new ConcurrentDictionary<string, string>();
         private UserRepository _userRepository;
 
-        public void Start(string ipAddress, int port)
+        public ChatServer(string ipAddress, int port, string userJsonPath)
         {
-            _userRepository = new UserRepository("users.json");
-
             _tcpListener = new TcpListener(IPAddress.Parse(ipAddress), port);
-            _tcpListener.Start();
-            Console.WriteLine($"Сервер запущен на {ipAddress}:{port}");
+            _userRepository = new UserRepository(userJsonPath);
+        }
 
+        public async Task StartAsync()
+        {
+            _tcpListener.Start();
+            Console.WriteLine($"[Server] Запущен на {_tcpListener.LocalEndpoint}");
             while (true)
             {
+                TcpClient client = await _tcpListener.AcceptTcpClientAsync();
+                _ = HandleClientAsync(client);
+            }
+        }
+
+        private async Task HandleClientAsync(TcpClient tcpClient)
+        {
+            string participantId = Guid.NewGuid().ToString();
+            Console.WriteLine($"[Server] Новый участник подключился: {participantId}");
+            using (tcpClient)
+            using (NetworkStream networkStream = tcpClient.GetStream())
+            using (var reader = new System.IO.StreamReader(networkStream, Encoding.UTF8))
+            using (var writer = new System.IO.StreamWriter(networkStream, Encoding.UTF8) { AutoFlush = true })
+            {
+                Participant participant = null;
                 try
                 {
-                    var client = _tcpListener.AcceptTcpClient();
-                    Thread clientThread = new Thread(() => HandleClient(client));
-                    clientThread.Start();
+                    // Ожидаем сообщение для логина: "LOGIN:username:password"
+                    string loginMessage = await reader.ReadLineAsync();
+                    if (string.IsNullOrEmpty(loginMessage) || !loginMessage.StartsWith("LOGIN:"))
+                    {
+                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidFormat");
+                        Console.WriteLine($"[Server] Некорректный формат LOGIN сообщения от {participantId}: {loginMessage}");
+                        return;
+                    }
+                    string[] parts = loginMessage.Split(':');
+                    if (parts.Length != 3)
+                    {
+                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidFormat");
+                        Console.WriteLine($"[Server] Некорректный формат LOGIN сообщения от {participantId}: {loginMessage}");
+                        return;
+                    }
+                    string username = parts[1];
+                    string password = parts[2];
+                    string role = AuthenticateUser(username, password);
+                    if (role == null)
+                    {
+                        await writer.WriteLineAsync("LOGIN_FAIL:InvalidCredentials");
+                        Console.WriteLine($"[Server] Неверные учетные данные для {username}.");
+                        return;
+                    }
+                    participant = new Participant(participantId, username, role, tcpClient);
+                    _participants.TryAdd(participantId, participant);
+                    await writer.WriteLineAsync($"LOGIN_OK:{role}");
+                    Console.WriteLine($"[Server] Участник {username} ({participantId}) успешно аутентифицирован как {role}");
+
+                    // Назначаем участника в комнату:
+                    // Для клиента - создаем/присоединяем комнату;
+                    // Для модератора - не присоединяем автоматически.
+                    string roomId = AssignParticipantToRoom(participant);
+                    if (!string.IsNullOrEmpty(roomId))
+                    {
+                        Console.WriteLine($"[Server] Участник {username} ({participantId}) добавлен в комнату {roomId}");
+                    }
+                    else if (role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"[Server] Модератор {username} зарегистрирован без присоединения к комнате.");
+                    }
+
+                    // Основной цикл чтения сообщений от участника.
+                    while (true)
+                    {
+                        string message = await reader.ReadLineAsync();
+                        if (message == null)
+                        {
+                            Console.WriteLine($"[Server] Участник {username} ({participantId}) отключился.");
+                            break;
+                        }
+                        Console.WriteLine($"[Server] Получено от {username} ({participantId}): {message}");
+
+                        // Если участник – модератор и отправил "CLIENT_LIST", отправляем список комнат.
+                        if (role.Equals("Moderator", StringComparison.OrdinalIgnoreCase) &&
+                            message.Equals("CLIENT_LIST", StringComparison.OrdinalIgnoreCase))
+                        {
+                            SendRoomListToModerator(participant);
+                            continue;
+                        }
+                        // Если модератор отправил команду подключения "CONNECT:<RoomId>"
+                        if (role.Equals("Moderator", StringComparison.OrdinalIgnoreCase) &&
+                            message.StartsWith("CONNECT:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string roomIdToConnect = message.Substring("CONNECT:".Length).Trim();
+                            if (_chatRooms.TryGetValue(roomIdToConnect, out ChatRoom room))
+                            {
+                                try
+                                {
+                                    room.AddParticipant(participant);
+                                    _participantToRoomMap[participant.Id] = roomIdToConnect;
+                                    Console.WriteLine($"[Server] Модератор {username} присоединён к комнате {roomIdToConnect}");
+                                    participant.SendMessage($"CONNECT_OK:{roomIdToConnect}");
+                                    BroadcastRoomListToModerators();
+                                }
+                                catch (Exception ex)
+                                {
+                                    participant.SendMessage("ERROR:" + ex.Message);
+                                }
+                            }
+                            else
+                            {
+                                participant.SendMessage("ERROR:RoomNotFound");
+                            }
+                            continue;
+                        }
+
+                        // Иначе маршрутизируем сообщение в соответствующую комнату.
+                        HandleChannelMessage(message, participantId);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Ошибка при подключении клиента: {ex.Message}");
+                    Console.WriteLine($"[Server] Ошибка с участником {participantId}: {ex.Message}");
+                }
+                finally
+                {
+                    RemoveParticipantFromRoom(participantId);
+                    _participants.TryRemove(participantId, out _);
+                    Console.WriteLine($"[Server] Участник {participantId} удалён.");
                 }
             }
         }
 
-        private void HandleClient(TcpClient client)
-        {
-            NetworkStream stream = client.GetStream();
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-
-            // Генерируем внутренний clientId (GUID) для отслеживания соединения
-            string clientId = Guid.NewGuid().ToString();
-            _clients.TryAdd(clientId, client);
-            _clientStreams.TryAdd(clientId, stream);
-            Console.WriteLine($"Клиент {clientId} подключился.");
-
-            try
-            {
-                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) != 0)
-                {
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-                    Console.WriteLine($"Получено от {clientId}: {message}");
-
-                    if (message.StartsWith("LOGIN"))
-                    {
-                        // ОЖИДАЕМ формат "LOGIN:username:password"
-                        string[] parts = message.Split(':');
-                        if (parts.Length == 3)
-                        {
-                            string username = parts[1];
-                            string password = parts[2];
-
-                            if (AuthenticateUser(username, password))
-                            {
-                                var user = _userRepository.GetUserByUsername(username);
-                                Console.WriteLine($"Пользователь {username} (роль: {user.Role}) успешно вошёл.");
-
-                                // Запоминаем, что данный clientId связан с username
-                                _clientIdToUsername[clientId] = username;
-                                _clientIdToRole[clientId] = user.Role;
-
-                                if (user.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // Create Participant
-                                    Participant clientParticipant = new Participant(clientId, username, client);
-
-                                    // Создаём комнату с ключом = clientId (GUID)
-                                    string roomId = clientId;
-                                    var chatRoom = new ChatRoom(roomId, clientParticipant);  // moderator = null, client = clientParticipant
-                                    _chatRooms[roomId] = chatRoom;
-
-                                    Console.WriteLine($"[SERVER] Создана комната {roomId} для клиента (логин={username}). Пока без модератора.");
-
-                                    // Посылаем логин-ОК
-                                    SendMessage(client, "LOGIN_OK:Client");
-                                }
-                                else if (user.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    if (!_moderators.ContainsKey(username))
-                                    {
-                                        // Добавляем модератора
-                                        _moderators.TryAdd(username, client);
-
-                                        // Посылаем логин-ОК
-                                        SendMessage(client, "LOGIN_OK:Moderator");
-
-                                        // Отправляем список клиентов
-                                        SendClientList(clientId);
-                                    }
-                                    else
-                                    {
-                                        Console.WriteLine($"Модератор {username} уже в системе.");
-                                        SendMessage(client, "LOGIN_FAIL:AlreadyLoggedIn");
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                Console.WriteLine($"Ошибка аутентификации для {username}: неверный логин или пароль.");
-                                // Отправим клиенту отказ
-                                SendMessage(client, "LOGIN_FAIL:InvalidCredentials");
-                            }
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[Server] Некорректный формат сообщения LOGIN от {clientId}: {message}");
-                            SendMessage(client, "LOGIN_FAIL:InvalidFormat");
-                        }
-                    }
-                    else if (message.StartsWith("CLIENT_LIST"))
-                    {
-                        Console.WriteLine($"Получен запрос CLIENT_LIST от {clientId}.");
-                        SendClientList(clientId);
-                    }
-                    else if (message.StartsWith("CONNECT"))
-                    {
-                        Console.WriteLine($"Получен запрос CONNECT от {clientId}.");
-                        HandleModeratorConnection(message, clientId);
-                    }
-                    else if (message.StartsWith("BUTTON"))
-                    {
-                        HandleButtonState(message, clientId);
-                    }
-                    else
-                    {
-                        HandleChannelMessage(message, clientId);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Ошибка клиента {clientId}: {ex.Message}");
-            }
-            finally
-            {
-                _clients.TryRemove(clientId, out _);
-                _clientStreams.TryRemove(clientId, out _);
-                _clientIdToUsername.TryRemove(clientId, out _);
-                _clientIdToRole.TryRemove(clientId, out _);
-                Console.WriteLine($"Клиент {clientId} отключился.");
-
-                // Если это клиент, удалить его из ChatRoom
-                // Найти комнату и удалить клиента
-                ChatRoom roomToRemove = null;
-                foreach (var room in _chatRooms.Values)
-                {
-                    if (room.Client.Id == clientId)
-                    {
-                        roomToRemove = room;
-                        break;
-                    }
-                }
-                if (roomToRemove != null)
-                {
-                    // Notify moderator, if any
-                    if (roomToRemove.Moderator != null)
-                    {
-                        roomToRemove.Moderator.SendMessage($"Client {roomToRemove.Client.Username} has disconnected from room {roomToRemove.RoomId}.");
-                    }
-
-                    // Remove the room
-                    _chatRooms.TryRemove(roomToRemove.RoomId, out _);
-                    Console.WriteLine($"Комната {roomToRemove.RoomId} удалена.");
-                }
-
-                // Если это был модератор, удалить из _moderators и уведомить клиентов в комнатах
-                if (_clientIdToRole.TryGetValue(clientId, out string role) && role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (_clientIdToUsername.TryGetValue(clientId, out string username))
-                    {
-                        _moderators.TryRemove(username, out _);
-                        Console.WriteLine($"Модератор {username} ({clientId}) отключился.");
-                        // Уведомляем клиентов в комнатах, где был этот модератор
-                        foreach (var room in _chatRooms.Values)
-                        {
-                            if (room.Moderator != null && room.Moderator.Id == clientId)
-                            {
-                                // Notify client about moderator disconnection
-                                room.Client.SendMessage($"Moderator {room.Moderator.Username} has disconnected from room {room.RoomId}.");
-                                room.SetModerator(null); // Remove moderator
-                            }
-                        }
-                    }
-                }
-
-                client.Close();
-            }
-        }
-
-        private bool AuthenticateUser(string username, string enteredPassword)
+        // Метод аутентификации, использующий UserRepository.
+        private string AuthenticateUser(string username, string password)
         {
             var user = _userRepository.GetUserByUsername(username);
-            if (user == null) return false;
-            // Предполагается, что PasswordHash хранит пароль в открытом виде для упрощения
-            // В реальной системе следует хранить хэш пароля
-            return user.PasswordHash == enteredPassword;
+            if (user != null && user.PasswordHash == password)
+            {
+                return user.Role;
+            }
+            return null;
         }
 
-        // Отправка списка всех клиентов (теперь не GUID'ы, а логины)
-        private void SendClientList(string clientId)
+        // Метод назначения участника в комнату.
+        // Если роль Client, создаём или присоединяем комнату.
+        // Если роль Moderator, не присоединяем автоматически.
+        private string AssignParticipantToRoom(Participant participant)
         {
-            Console.WriteLine("=== Enter SendClientList ===");
-            Console.WriteLine($"Запрошен список клиентов для отправки клиенту c ID = {clientId}");
-
-            var onlyClients = new List<string>();
-
-            Console.WriteLine(">>> Составляем список только тех, у кого роль = Client:");
-            foreach (var kvp in _clientIdToUsername)
+            string roomId = string.Empty;
+            if (participant.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
             {
-                string someClientId = kvp.Key;  // GUID
-                string username = kvp.Value;
-
-                Console.WriteLine($"Проверяем clientId={someClientId}, username={username}");
-                if (_clientIdToRole.TryGetValue(someClientId, out var role))
+                // Ищем комнату, где еще нет клиента.
+                var room = _chatRooms.Values.FirstOrDefault(r => r.Client == null);
+                if (room != null)
                 {
-                    Console.WriteLine($"Найдена роль [{role}] для clientId={someClientId}");
-                    if (role.Equals("Client", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Добавляем в список
-                        onlyClients.Add(username);
-                        Console.WriteLine($"Добавлен [{username}] в список onlyClients");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Пропускаем [{username}], т.к. роль = {role}");
-                    }
+                    room.AddParticipant(participant);
+                    roomId = room.RoomId;
+                    _participantToRoomMap.TryAdd(participant.Id, roomId);
+                    Console.WriteLine($"[Server] Client {participant.Username} присоединён к комнате {roomId}");
                 }
                 else
                 {
-                    Console.WriteLine($"Не удалось найти роль для clientId={someClientId}, пропускаем");
+                    roomId = "Room_" + Guid.NewGuid().ToString();
+                    ChatRoom newRoom = new ChatRoom(roomId);
+                    newRoom.AddParticipant(participant);
+                    _chatRooms.TryAdd(roomId, newRoom);
+                    _participantToRoomMap.TryAdd(participant.Id, roomId);
+                    Console.WriteLine($"[Server] Создана новая комната {roomId} для клиента {participant.Username}");
                 }
+                // После добавления клиента рассылаем обновлённый список комнат модераторам.
+                BroadcastRoomListToModerators();
             }
-
-            // Формируем строку CLIENT_LIST
-            string clientList = string.Join(",", onlyClients);
-            string response = "CLIENT_LIST:" + clientList;
-            Console.WriteLine($">>> Итоговый список логинов (только Client) = {clientList}");
-
-            byte[] data = Encoding.UTF8.GetBytes(response);
-
-            try
+            else if (participant.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
             {
-                // Ищем нужный поток для clientId
-                if (_clientStreams.TryGetValue(clientId, out var stream))
-                {
-                    // Отправляем данные
-                    stream.Write(data, 0, data.Length);
-                    Console.WriteLine($"Список клиентов (роль=Client) отправлен клиенту {clientId}: {response}");
-                }
-                else
-                {
-                    Console.WriteLine($"[ПРЕДУПРЕЖДЕНИЕ] _clientStreams не содержит {clientId}, не можем отправить список!");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ОШИБКА] При отправке списка клиенту {clientId}: {ex.Message}");
-            }
-
-            Console.WriteLine("=== Exit SendClientList ===\n");
-        }
-
-        private string FindClientIdByUsername(string username)
-        {
-            foreach (var pair in _clientIdToUsername)
-            {
-                // pair.Key — GUID, pair.Value — логин (например, c123)
-                if (pair.Value.Equals(username, StringComparison.OrdinalIgnoreCase))
-                {
-                    return pair.Key; // Вернём GUID
-                }
-            }
-            return null; // не нашли
-        }
-
-        private void HandleModeratorConnection(string message, string moderatorGuid)
-        {
-            // message = "CONNECT:c123"
-            string[] parts = message.Split(':');
-            if (parts.Length == 2)
-            {
-                string targetUsername = parts[1]; // "c123"
-
-                // 1) Ищем реальный GUID клиента по логину
-                string targetClientGuid = FindClientIdByUsername(targetUsername);
-
-                // 2) Если нашли GUID
-                if (!string.IsNullOrEmpty(targetClientGuid))
-                {
-                    // 3) Пытаемся найти комнату с ключом = targetClientGuid
-                    if (_chatRooms.TryGetValue(targetClientGuid, out var chatRoom))
-                    {
-                        // 4) Получаем модератора Participant
-                        if (_clientIdToUsername.TryGetValue(moderatorGuid, out string moderatorUsername))
-                        {
-                            // Проверяем роль модератора
-                            if (_clientIdToRole.TryGetValue(moderatorGuid, out string role) && role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
-                            {
-                                Participant moderatorParticipant = new Participant(moderatorGuid, moderatorUsername, _clients[moderatorGuid]);
-
-                                // Назначаем модератора в ChatRoom
-                                chatRoom.SetModerator(moderatorParticipant);
-                                Console.WriteLine($"Модератор {moderatorGuid} ({moderatorUsername}) подключается к комнате {targetClientGuid} (логин={targetUsername})");
-
-                                // 5) Шлём CONNECT_OK
-                                SendMessage(_clients[moderatorGuid], $"CONNECT_OK:{targetUsername}");
-
-                                // Уведомляем модератора о текущем состоянии комнаты
-                                chatRoom.NotifyModeratorAboutNewClient();
-                            }
-                            else
-                            {
-                                Console.WriteLine($"[Server] Participant {moderatorGuid} не имеет роли Moderator.");
-                                SendMessage(_clients[moderatorGuid], "CONNECT_FAIL:NotModerator");
-                            }
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[Server] Не удалось найти username для модератора {moderatorGuid}.");
-                            SendMessage(_clients[moderatorGuid], "CONNECT_FAIL:UnknownModerator");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[SERVER] Комната для клиента {targetUsername} (guid={targetClientGuid}) не найдена.");
-                        SendMessage(_clients[moderatorGuid], $"CONNECT_FAIL:RoomNotFound:{targetUsername}");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"[SERVER] Не нашли GUID для логина {targetUsername}.");
-                    SendMessage(_clients[moderatorGuid], $"CONNECT_FAIL:UserNotFound:{targetUsername}");
-                }
+                // Для модератора не присоединяем автоматически.
+                Console.WriteLine($"[Server] Модератор {participant.Username} зарегистрирован без присоединения к комнате.");
             }
             else
             {
-                Console.WriteLine($"[Server] Некорректный формат сообщения CONNECT от {moderatorGuid}: {message}");
-                SendMessage(_clients[moderatorGuid], "CONNECT_FAIL:InvalidFormat");
+                roomId = "Room_" + Guid.NewGuid().ToString();
+                ChatRoom newRoom = new ChatRoom(roomId);
+                newRoom.AddParticipant(participant);
+                _chatRooms.TryAdd(roomId, newRoom);
+                _participantToRoomMap.TryAdd(participant.Id, roomId);
+                Console.WriteLine($"[Server] Создана новая комната {roomId} для участника {participant.Username}");
+            }
+            return roomId;
+        }
+
+        // Метод отправки списка комнат модератору.
+        // Формируем список доступных комнат: там, где есть клиент, но нет модератора.
+        // Отправляем имена клиентов в качестве идентификаторов.
+        private void SendRoomListToModerator(Participant moderator)
+        {
+            var availableRooms = _chatRooms.Values
+                .Where(r => r.Client != null && r.Moderator == null)
+                .Select(r => r.Client.Username)
+                .ToArray();
+            string message = "ROOM_LIST:" + string.Join(",", availableRooms);
+            moderator.SendMessage(message);
+            Console.WriteLine($"[Server] Отправлен список комнат модератору {moderator.Username}: {message}");
+        }
+
+        // Рассылает список комнат всем модераторам.
+        private void BroadcastRoomListToModerators()
+        {
+            foreach (var mod in _participants.Values.Where(p => p.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase)))
+            {
+                SendRoomListToModerator(mod);
             }
         }
 
+        // Метод маршрутизации сообщений по комнатам.
         private void HandleChannelMessage(string message, string senderId)
         {
-            // Определяем, к какой комнате относится отправитель
             foreach (var room in _chatRooms.Values)
             {
-                if (room.HasParticipant(senderId))
+                if (room.Client != null && room.Client.Id == senderId)
                 {
-                    room.BroadcastMessage(message, senderId);
+                    if (room.Moderator != null)
+                        room.Moderator.SendMessage(message);
+                    room.Client.SendMessage(message);
+                    return;
+                }
+                if (room.Moderator != null && room.Moderator.Id == senderId)
+                {
+                    if (room.Client != null)
+                        room.Client.SendMessage(message);
+                    room.Moderator.SendMessage(message);
                     return;
                 }
             }
-
-            Console.WriteLine($"[Server] Отправитель {senderId} не принадлежит ни к одной комнате.");
         }
 
-        private void HandleButtonState(string message, string senderId)
+        // Метод удаления участника из комнаты.
+        private void RemoveParticipantFromRoom(string participantId)
         {
-            string[] parts = message.Split(':');
-            if (parts.Length == 3 && parts[0] == "BUTTON")
+            if (_participantToRoomMap.TryRemove(participantId, out string roomId))
             {
-                Console.WriteLine($"Состояние кнопки от {senderId}: {message}");
-                // Определяем, к какой комнате принадлежит отправитель
-                foreach (var room in _chatRooms.Values)
+                if (_chatRooms.TryGetValue(roomId, out ChatRoom room))
                 {
-                    if (room.HasParticipant(senderId))
+                    room.RemoveParticipant(participantId);
+                    Console.WriteLine($"[Server] Участник {participantId} удалён из комнаты {roomId}.");
+                    if (room.Client == null && room.Moderator == null)
                     {
-                        room.BroadcastMessage(message, senderId);
-                        // Additionally, notify moderator if needed
-                        room.NotifyModeratorButtonState(message);
-                        return;
+                        _chatRooms.TryRemove(roomId, out _);
+                        Console.WriteLine($"[Server] Комната {roomId} удалена, так как она пуста.");
+                    }
+                    else
+                    {
+                        // Если был удалён клиент, обновляем список комнат.
+                        BroadcastRoomListToModerators();
                     }
                 }
-
-                Console.WriteLine($"[Server] Не найдена комната для отправителя {senderId} при обработке BUTTON сообщения.");
             }
-            else
-            {
-                Console.WriteLine($"[Server] Некорректный формат BUTTON сообщения от {senderId}: {message}");
-            }
-        }
-
-        private void SendMessage(TcpClient client, string message)
-        {
-            try
-            {
-                NetworkStream stream = client.GetStream();
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                stream.Write(data, 0, data.Length);
-                Console.WriteLine($"Сообщение отправлено клиенту {client.Client.RemoteEndPoint}: {message}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Ошибка отправки сообщения: {ex.Message}");
-            }
-        }
-
-        public void Stop()
-        {
-            _tcpListener.Stop();
-            Console.WriteLine("Сервер остановлен.");
         }
     }
 }
