@@ -4,6 +4,9 @@ using System.Text;
 
 namespace ChatServerApp.Network
 {
+    /// <summary>
+    /// Представляет участника (клиента или модератора).
+    /// </summary>
     public class Participant
     {
         public string Id { get; private set; }
@@ -48,6 +51,5 @@ namespace ChatServerApp.Network
                 Console.WriteLine($"[Server] Error sending message to {Username} ({Id}): {ex.Message}");
             }
         }
-
     }
 }

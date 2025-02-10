@@ -9,12 +9,15 @@ using System.Threading.Tasks;
 
 namespace ChatServerApp.Network
 {
+    /// <summary>
+    /// Серверная логика: аутентификация, создание комнат, хранение активных клиентов.
+    /// </summary>
     public class ChatServer
     {
         private TcpListener _tcpListener;
         private ConcurrentDictionary<string, ChatRoom> _chatRooms = new ConcurrentDictionary<string, ChatRoom>();
         private ConcurrentDictionary<string, Participant> _participants = new ConcurrentDictionary<string, Participant>();
-        // Новая коллекция для активных клиентов (участников с ролью "Client")
+        // Коллекция активных клиентов (с ролью "Client")
         private ConcurrentDictionary<string, Participant> _activeClients = new ConcurrentDictionary<string, Participant>();
         private UserRepository _userRepository;
 
@@ -47,7 +50,7 @@ namespace ChatServerApp.Network
                 Participant participant = null;
                 try
                 {
-                    // Аутентификация: ожидаем "LOGIN:username:password"
+                    // Ожидаем логин: "LOGIN:username:password"
                     string loginMessage = await reader.ReadLineAsync();
                     if (string.IsNullOrEmpty(loginMessage) || !loginMessage.StartsWith("LOGIN:"))
                     {
@@ -76,17 +79,15 @@ namespace ChatServerApp.Network
                     await writer.WriteLineAsync($"LOGIN_OK:{role}");
                     Console.WriteLine($"[Server] Участник {username} ({participantId}) успешно аутентифицирован как {role}");
 
-                    // Если участник клиент, добавляем его в активные клиенты.
+                    // Если клиент, добавляем в активные клиенты и создаём для него комнату.
                     if (role.Equals("Client", StringComparison.OrdinalIgnoreCase))
                     {
                         _activeClients.TryAdd(participantId, participant);
-                        // Можно создать комнату для клиента, если требуется для дальнейшей коммуникации.
                         string roomId = "Room_" + Guid.NewGuid().ToString();
                         ChatRoom newRoom = new ChatRoom(roomId);
                         newRoom.AddParticipant(participant);
                         _chatRooms.TryAdd(roomId, newRoom);
                         Console.WriteLine($"[Server] Создана новая комната {roomId} для клиента {participant.Username}");
-                        // Обновляем список активных клиентов для модераторов.
                         BroadcastActiveClientsToModerators();
                     }
                     else if (role.Equals("Moderator", StringComparison.OrdinalIgnoreCase))
@@ -112,18 +113,15 @@ namespace ChatServerApp.Network
                             SendActiveClientsListToModerator(participant);
                             continue;
                         }
-
-                        // Если модератор отправляет команду подключения "CONNECT:<clientUsername>"
+                        // Если модератор отправляет "CONNECT:<clientUsername>"
                         if (role.Equals("Moderator", StringComparison.OrdinalIgnoreCase) &&
                             message.StartsWith("CONNECT:", StringComparison.OrdinalIgnoreCase))
                         {
                             string targetClientUsername = message.Substring("CONNECT:".Length).Trim();
-                            // Находим клиента по имени
-                            Participant targetClient = _activeClients.Values.FirstOrDefault(c => c.Username.Equals(targetClientUsername, StringComparison.OrdinalIgnoreCase));
+                            Participant targetClient = _activeClients.Values.FirstOrDefault(c =>
+                                c.Username.Equals(targetClientUsername, StringComparison.OrdinalIgnoreCase));
                             if (targetClient != null)
                             {
-                                // Здесь можно создать комнату для соединения или отправить уведомление клиенту.
-                                // Пример: отправляем модератору подтверждение.
                                 participant.SendMessage($"CONNECT_OK:{targetClientUsername}");
                                 Console.WriteLine($"[Server] Модератор {participant.Username} подключается к клиенту {targetClientUsername}");
                             }
@@ -134,7 +132,7 @@ namespace ChatServerApp.Network
                             continue;
                         }
 
-                        // Остальные сообщения маршрутизируем в комнату (если требуется) или обрабатываем отдельно.
+                        // Маршрутизируем прочие сообщения, если требуется.
                         HandleChannelMessage(message, participantId);
                     }
                 }
@@ -144,7 +142,6 @@ namespace ChatServerApp.Network
                 }
                 finally
                 {
-                    // При отключении участника, если это клиент, удаляем его из активных клиентов.
                     if (participant != null && participant.Role.Equals("Client", StringComparison.OrdinalIgnoreCase))
                     {
                         _activeClients.TryRemove(participantId, out _);
@@ -156,7 +153,7 @@ namespace ChatServerApp.Network
             }
         }
 
-        // Метод аутентификации (простой пример)
+        // Метод аутентификации, использующий UserRepository.
         private string AuthenticateUser(string username, string password)
         {
             var user = _userRepository.GetUserByUsername(username);
@@ -167,26 +164,16 @@ namespace ChatServerApp.Network
             return null;
         }
 
-        // Метод отправки списка активных клиентов (т.е. тех, кто с ролью "Client")
+        // Отправка списка активных клиентов модератору.
         private void SendActiveClientsListToModerator(Participant moderator)
         {
             var activeClients = _activeClients.Values.Select(c => c.Username).ToArray();
-            string message;
-            if (activeClients.Length > 0)
-            {
-                message = "CLIENT_LIST:" + string.Join(",", activeClients);
-            }
-            else
-            {
-                message = "CLIENT_LIST:"; // или можно отправить специальное сообщение, например, "CLIENT_LIST:Нет активных клиентов"
-            }
+            string message = "CLIENT_LIST:" + string.Join(",", activeClients);
             moderator.SendMessage(message);
             Console.WriteLine($"[Server] Отправлен список активных клиентов модератору {moderator.Username}: {message}");
         }
 
-
-
-        // Метод рассылки списка активных клиентов всем модераторам
+        // Рассылка списка активных клиентов всем модераторам.
         private void BroadcastActiveClientsToModerators()
         {
             foreach (var mod in _participants.Values.Where(p => p.Role.Equals("Moderator", StringComparison.OrdinalIgnoreCase)))
@@ -195,7 +182,7 @@ namespace ChatServerApp.Network
             }
         }
 
-        // Пример метода маршрутизации сообщений по комнатам (если требуется)
+        // Пример маршрутизации сообщений по комнатам (если требуется).
         private void HandleChannelMessage(string message, string senderId)
         {
             foreach (var room in _chatRooms.Values)

@@ -120,6 +120,9 @@ using System;
 
 namespace ChatServerApp.Network
 {
+    /// <summary>
+    /// Класс комнаты чата.
+    /// </summary>
     public class ChatRoom
     {
         public string RoomId { get; private set; }

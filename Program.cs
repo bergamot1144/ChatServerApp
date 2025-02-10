@@ -29,6 +29,7 @@
 //}
 
 using System;
+using System.Text;
 using System.Threading.Tasks;
 using ChatServerApp.Network;
 
@@ -38,7 +39,9 @@ namespace ChatServerApp
     {
         static async Task Main(string[] args)
         {
-            // Укажите путь к файлу users.json (поместите его в рабочую директорию)
+            Console.OutputEncoding = Encoding.UTF8;
+
+            // Укажите путь к файлу users.json (он должен находиться в рабочей директории)
             string userJsonPath = "users.json";
             ChatServer server = new ChatServer("127.0.0.1", 9000, userJsonPath);
             await server.StartAsync();
